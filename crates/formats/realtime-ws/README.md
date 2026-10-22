@@ -84,8 +84,9 @@ What one spec has and the other has not is emulated, dropped or refused:
   tool choice other than `auto` and `create_response: false` are refused.
   A transcription session (`type: "transcription"`, the kind's
   `Purpose::Transcription`), which the Live API answers all the same, has
-  its answers dropped: the user's transcript streams, and its turn's end,
-  or a transcriber's end of its generation, completes it.
+  its answers dropped: the user's transcript streams, and is whole at an
+  answer's end, the user's next turn, or a transcriber's end of its
+  generation.
 - To OpenAI: Gemini's client routes by `?model=` on its URL (OpenAI takes
   its model at connect), and its `activityStart` while the model speaks is
   `response.cancel` (one that reaches OpenAI as the response ends is refused
@@ -121,10 +122,11 @@ and into the opening `Session` by `realtime::set_model`, which Gemini's
 setup names. Each provider writes its own query, never the client's.
 
 A transcription is one from its connect, as OpenAI's is: its client asks
-for it at `?intent=transcription` (`requested_purpose`), beside the `?model=`
-that routes it, and OpenAI's provider dials `?intent=transcription` with no
-model, naming the model routing chose as the one that transcribes. Its
-first session is then a transcription, unless it says otherwise.
+for it at `?intent=transcription`, beside the `?model=` that routes it, and
+OpenAI's provider dials `?intent=transcription` with no model, naming the
+model routing chose as the one that transcribes, in every session. Its
+first session is then a transcription, unless it says otherwise; a session
+that says nothing of it is a conversation.
 
 Used by: the [binary](../../../apps/gateway/src/main.rs), and the
 [realtime examples](../../../examples/realtime).

@@ -34,7 +34,6 @@ pub use openai::OpenAiRealtime;
 pub use responses::ResponsesWs;
 
 use respan_gateway_http::raw::Original;
-use respan_gateway_realtime::Purpose;
 
 /// The model routing chose for a session, in a call's extensions: a format
 /// whose provider takes its model at connect, as OpenAI's does at
@@ -52,11 +51,4 @@ pub struct SessionModel(pub String);
 /// session is routed.
 pub fn requested_model(wire: &Original) -> Option<String> {
     session::model_at(wire.get()?.uri())
-}
-
-/// What a session's handshake asks it to be for, whose provider must know
-/// it at connect: a transcription at `?intent=transcription`, as OpenAI
-/// Realtime's client asks.
-pub fn requested_purpose(wire: &Original) -> Option<Purpose> {
-    session::purpose_at(wire.get()?.uri())
 }
