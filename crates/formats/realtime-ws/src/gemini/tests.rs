@@ -2,7 +2,7 @@ use respan_gateway_core::Fault;
 use respan_gateway_core::FaultKind;
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_realtime::{
-    AudioFormat, Cause, Input, Modality, Output, Session, Status, Turns,
+    AudioFormat, Cause, Input, Modality, Output, Purpose, Session, Status, Turns,
 };
 use respan_gateway_ws::CloseCode;
 use serde_json::{Value, json};
@@ -416,4 +416,54 @@ fn a_cancelled_turn_says_nothing_more_and_a_withdrawn_call_takes_no_answer() {
         1,
         "no answer to a withdrawn call, nor a response"
     );
+}
+
+#[test]
+fn a_transcription_drops_the_answer_and_ends_the_users_transcript() {
+    let shared = Shared::default();
+    let mut session = Session::default();
+    session.purpose = Some(Purpose::Transcription);
+    session.input_transcription = Some(true);
+    sent(&shared, &[Input::Session(session)]).expect("sent");
+    let events = outputs(
+        &shared,
+        &[
+            json!({"serverContent": {"inputTranscription": {"text": "Hel"}}}),
+            json!({"serverContent": {"inputTranscription": {"text": "lo"}}}),
+            json!({"serverContent": {"modelTurn": {"parts": [{"text": "Hi there"}]}}}),
+            json!({"serverContent": {"outputTranscription": {"text": "Hi there"}}}),
+            json!({"serverContent": {"turnComplete": true}}),
+        ],
+    );
+    let said: Vec<_> = events
+        .iter()
+        .map(|e| match e {
+            Output::InputTranscript { text, complete, .. } => (text.as_str(), *complete),
+            other => panic!("not dropped: {other:?}"),
+        })
+        .collect();
+    assert_eq!(said, [("Hel", false), ("lo", false), ("Hello", true)]);
+}
+
+#[test]
+fn a_transcriber_ends_the_users_transcript_at_its_generations_end() {
+    let shared = Shared::default();
+    let mut session = Session::default();
+    session.purpose = Some(Purpose::Transcription);
+    sent(&shared, &[Input::Session(session)]).expect("sent");
+    let events = outputs(
+        &shared,
+        &[
+            json!({"serverContent": {"inputTranscription": {"text": "Hello there."}}}),
+            json!({"serverContent": {"generationComplete": true}}),
+        ],
+    );
+    let said: Vec<_> = events
+        .iter()
+        .filter_map(|e| match e {
+            Output::InputTranscript { text, complete, .. } => Some((text.as_str(), *complete)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(said, [("Hello there.", false), ("Hello there.", true)]);
 }

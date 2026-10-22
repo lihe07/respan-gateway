@@ -11,7 +11,7 @@ use std::sync::atomic::Ordering;
 
 use respan_gateway_core::{Fault, NativeFields, NativeValue};
 use respan_gateway_http::bytes::Bytes;
-use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Status, Usage};
+use respan_gateway_realtime::{Audio, AudioFormat, Cause, Output, Purpose, Status, Usage};
 use respan_gateway_ws::CloseCode;
 use serde_json::{Map, Value, json};
 
@@ -44,6 +44,8 @@ pub(super) struct Provider {
     /// Whether an interruption said the user began speaking before
     /// `voiceActivity`, which the Live API sends just after it.
     told: bool,
+    /// What was heard of the user's turn, in a transcription.
+    heard: String,
 }
 
 impl Provider {
@@ -53,6 +55,7 @@ impl Provider {
             ended: false,
             spoke: false,
             told: false,
+            heard: String::new(),
         }
     }
 
@@ -66,13 +69,15 @@ impl Provider {
         let used = usage(&mut v);
         let mut events = Vec::new();
         let shared = self.shared.clone();
-        if self.decode(&mut shared.lock(), &mut v, &mut events) {
-            out.push(Output::ResponseStart {
+        let mut state = shared.lock();
+        let mut said = Vec::new();
+        if self.decode(&mut state, &mut v, &mut events) {
+            said.push(Output::ResponseStart {
                 id: None,
                 native: None,
             });
         }
-        out.extend(used.map(Output::Usage));
+        said.extend(used.map(Output::Usage));
         let rest = v.as_object().filter(|rest| !rest.is_empty());
         match events
             .iter_mut()
@@ -81,8 +86,54 @@ impl Provider {
             Some(first) => keep(first, rest),
             None => events.extend(rest.map(|rest| Output::native(NAME, rest.clone()))),
         }
-        out.extend(events);
+        said.extend(events);
+        let applied = state.applied.as_ref();
+        if applied.is_some_and(|s| s.purpose == Some(Purpose::Transcription)) {
+            said = said
+                .into_iter()
+                .filter_map(|e| self.transcribed(e))
+                .collect();
+        }
+        out.extend(said);
         Ok(())
+    }
+
+    /// `event` in a transcription, which the Live API answers all the
+    /// same: its answer is dropped, and its end, which comes once all the
+    /// user said of its turn has, ends the user's transcript; a model that
+    /// only transcribes ends its generation, not a turn.
+    fn transcribed(&mut self, event: Output) -> Option<Output> {
+        match event {
+            Output::InputTranscript {
+                ref text,
+                complete: false,
+                native: None,
+            } => {
+                self.heard.push_str(text);
+                Some(event)
+            }
+            Output::ResponseDone { .. } => self.whole(),
+            Output::Native(ref native)
+                if native.value["serverContent"]["generationComplete"] == true =>
+            {
+                self.whole().or(Some(event))
+            }
+            Output::ResponseStart { .. }
+            | Output::Audio { .. }
+            | Output::Text { .. }
+            | Output::Transcript { .. }
+            | Output::ToolCall { .. } => None,
+            event => Some(event),
+        }
+    }
+
+    /// The user's whole transcript of its turn, if anything was heard.
+    fn whole(&mut self) -> Option<Output> {
+        (!self.heard.is_empty()).then(|| Output::InputTranscript {
+            text: std::mem::take(&mut self.heard),
+            complete: true,
+            native: None,
+        })
     }
 
     /// The events of what `v` says, taken from it; whether a response

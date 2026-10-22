@@ -540,6 +540,7 @@ fn changes(applied: &Session, s: &Session) -> Option<&'static str> {
         Some(c) => Some(c.clone()),
     };
     [
+        ("type", differs(&s.purpose, &applied.purpose)),
         ("model", differs(&s.model, &applied.model)),
         (
             "instructions",

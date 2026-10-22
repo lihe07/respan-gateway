@@ -11,12 +11,12 @@ use respan_gateway_core::{Connection, Fault, Format};
 use respan_gateway_http::bytes::Bytes;
 use respan_gateway_http::{ClientIo, ProviderIo, raw::Original};
 use respan_gateway_http::{Connect, Reach, Upstream};
-use respan_gateway_realtime::{Input, Output};
+use respan_gateway_realtime::{Input, Output, Purpose};
 use respan_gateway_ws::WsTransport;
 
 use crate::foreign::{Drop, Harmless};
-use crate::session::{Spec, model_at, model_query};
-use crate::{SessionModel, requested_model};
+use crate::session::{Spec, TRANSCRIPTION_QUERY, model_at, model_query, purpose_at};
+use crate::{SessionModel, requested_model, requested_purpose};
 
 const NAME: &str = SPEC.name;
 
@@ -26,7 +26,7 @@ const NAME: &str = SPEC.name;
 const TRANSCRIPTION_MODEL: &str = "gpt-4o-mini-transcribe";
 
 /// What of OpenAI Realtime's own natives another format may drop: its
-/// event and item ids, its session's type, noise reduction, speed,
+/// event and item ids, its session's noise reduction, speed,
 /// transcription settings, tracing, includes, context truncation and output
 /// cap, and its voice detection's tuning, as each format manages its
 /// context, and detects voices, itself; its truncation of what was heard
@@ -37,7 +37,6 @@ pub(crate) const HARMLESS: Harmless = Harmless {
     format: NAME,
     session: &[
         "event_id",
-        "session.type",
         "session.audio.input.noise_reduction",
         "session.audio.input.transcription",
         "session.audio.output.speed",
@@ -121,8 +120,8 @@ impl Format<ClientIo, Input, Output> for OpenAiRealtime {
     }
 
     fn bind(&self, io: ClientIo) -> Result<Connection<Input, Output>, Fault> {
-        let model = model_at(io.request().uri());
-        let mut client = input::Client::new(model);
+        let uri = io.request().uri();
+        let mut client = input::Client::new(model_at(uri), purpose_at(uri));
         let read = move |raw: Bytes, out: &mut Vec<Input>| client.read(raw, out);
         let mut client = output::Client::default();
         let write = Box::new(move |event: &Output, out: &mut Vec<Bytes>| client.write(event, out));
@@ -161,11 +160,18 @@ impl Format<ProviderIo, Output, Input> for OpenAiRealtime {
                 "OpenAI Realtime takes its model at connect: name it with ?model= on the session's URL",
             )
         })?;
-        let query = Some(model_query(&model));
-        let mut provider = input::Provider::new(model);
+        // OpenAI opens a transcription at its intent, with no model: the
+        // model is the one that transcribes.
+        let wire = io.extensions().get::<Original>();
+        let transcribing = wire.and_then(requested_purpose) == Some(Purpose::Transcription);
+        let query = match transcribing {
+            true => TRANSCRIPTION_QUERY.to_owned(),
+            false => model_query(&model),
+        };
+        let mut provider = input::Provider::new(model, transcribing);
         let write = Box::new(move |event: &Input, out: &mut Vec<Bytes>| provider.write(event, out));
         let mut provider = output::Provider::default();
         let read = move |raw: Bytes, out: &mut Vec<Output>| provider.read(raw, out);
-        Ok(SPEC.provider(io, query, write, Box::new(read), None))
+        Ok(SPEC.provider(io, Some(query), write, Box::new(read), None))
     }
 }

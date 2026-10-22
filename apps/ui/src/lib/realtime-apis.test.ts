@@ -19,7 +19,7 @@ const lines = (state: RealtimeState) =>
 describe("Gemini Live", () => {
   it("opens with a setup that asks for audio and both transcripts", () => {
     const gemini = geminiLive;
-    expect(gemini.opening("gemini-live-2.5-flash")).toEqual([
+    expect(gemini.opening("gemini-live-2.5-flash", "conversation")).toEqual([
       {
         setup: {
           model: "models/gemini-live-2.5-flash",

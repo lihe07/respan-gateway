@@ -3,6 +3,7 @@
 // and reads what the server sends into OpenAI Realtime's events, which the
 // page and its reducer read whatever the API.
 
+import type { Model } from "@/lib/api";
 import type { Json } from "@/lib/playground-apis";
 import type { ServerEvent } from "@/lib/realtime";
 import { REALTIME_RATE } from "@/lib/realtime-audio";
@@ -12,6 +13,21 @@ export type RealtimeApiId = "openai-realtime" | "gemini-live";
 /** A message a client sends, as the API has it. */
 export type ClientMessage = Record<string, unknown>;
 
+/** What a session is for: the model answering, or the user's speech transcribed alone. */
+export type RealtimeMode = "conversation" | "transcription";
+
+/** Whether a model transcribes, by its name. */
+const transcribes = (model: Model) => /transcribe|whisper/i.test(model.id);
+
+/**
+ * `models` with those that transcribe first: a transcription's model is the
+ * one that transcribes, and a conversational one may refuse to.
+ */
+export const transcribersFirst = (models: Model[]) => [
+  ...models.filter(transcribes),
+  ...models.filter((m) => !transcribes(m)),
+];
+
 export interface RealtimeApi {
   id: RealtimeApiId;
   label: string;
@@ -19,12 +35,19 @@ export interface RealtimeApi {
   path: string;
   /** That path, as shown. */
   endpoint: string;
-  /** Its URL on the page's host, for `model`, carrying `key` if the API takes it there. */
-  url: (model: string, key: string | null, location: Pick<Location, "protocol" | "host">) => string;
+  /** Its URL on the page's host, for `model` and `mode`, carrying `key` if the API takes it there. */
+  url: (
+    model: string,
+    key: string | null,
+    location: Pick<Location, "protocol" | "host">,
+    mode: RealtimeMode,
+  ) => string;
   /** The subprotocols it offers, carrying `key` if the API takes it there. */
   protocols: (key: string | null) => string[];
+  /** What its sessions can be for, the first its default. */
+  modes: RealtimeMode[];
   /** What a client sends first, once the session is open. */
-  opening: (model: string) => ClientMessage[];
+  opening: (model: string, mode: RealtimeMode) => ClientMessage[];
   /** One chunk of the mic: base64 PCM16 mono at 24 kHz. */
   audio: (base64: string) => ClientMessage;
   /**
@@ -51,14 +74,20 @@ export const openaiRealtime: RealtimeApi = {
   label: "OpenAI Realtime",
   path: "/v1/realtime",
   endpoint: "/v1/realtime",
-  url: (model, _key, location) =>
-    socketUrl(location, `/v1/realtime?model=${encodeURIComponent(model)}`),
+  // A transcription is one from its connect, as OpenAI takes it; the model
+  // routes it, as the gateway takes it.
+  url: (model, _key, location, mode) =>
+    socketUrl(
+      location,
+      `/v1/realtime?model=${encodeURIComponent(model)}${mode === "transcription" ? "&intent=transcription" : ""}`,
+    ),
   protocols: (key) => (key ? ["realtime", `openai-insecure-api-key.${key}`] : ["realtime"]),
-  opening: () => [
+  modes: ["conversation", "transcription"],
+  opening: (_model, mode) => [
     {
       type: "session.update",
       session: {
-        type: "realtime",
+        type: mode === "transcription" ? "transcription" : "realtime",
         audio: { input: { transcription: { model: "gpt-4o-mini-transcribe" } } },
       },
     },
@@ -95,6 +124,7 @@ export const geminiLive: RealtimeApi = {
     return socketUrl(location, `${GEMINI_PATH}?${query}`);
   },
   protocols: () => [],
+  modes: ["conversation"],
   opening: (model) => [
     {
       setup: {

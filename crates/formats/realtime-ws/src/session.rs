@@ -10,7 +10,7 @@ use respan_gateway_http::http::header::{SEC_WEBSOCKET_PROTOCOL, UPGRADE};
 use respan_gateway_http::http::response::Parts as ResponseHead;
 use respan_gateway_http::http::{HeaderMap, HeaderValue, Method, Request, StatusCode, Uri};
 use respan_gateway_http::{self as h, ClientIo, Decoder, Encoder, ProviderIo};
-use respan_gateway_realtime::{Input, Output};
+use respan_gateway_realtime::{Input, Output, Purpose};
 use respan_gateway_ws::WsTransport;
 use serde_json::Value;
 
@@ -155,6 +155,19 @@ pub(crate) fn model_at(uri: &Uri) -> Option<String> {
         .find(|(name, model)| name == "model" && !model.is_empty())
         .map(|(_, model)| model.into_owned())
 }
+
+/// What a client's handshake asks its session to be for: a transcription
+/// at `?intent=transcription`, as OpenAI's says it.
+pub(crate) fn purpose_at(uri: &Uri) -> Option<Purpose> {
+    let query = uri.query()?.as_bytes();
+    form_urlencoded::parse(query)
+        .any(|(name, intent)| name == "intent" && intent == "transcription")
+        .then_some(Purpose::Transcription)
+}
+
+/// A handshake's query asking for a transcription, as [`purpose_at`] reads
+/// it.
+pub(crate) const TRANSCRIPTION_QUERY: &str = "intent=transcription";
 
 /// A handshake's query naming `model`, escaped, as [`model_at`] reads it.
 pub(crate) fn model_query(model: &str) -> String {
